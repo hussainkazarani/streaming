@@ -1,8 +1,15 @@
+const token = localStorage.getItem("token");
+
+if (!token) {
+    window.location.href = "/login/login.html";
+}
+
 const SAMPLE_RATE = 24000;
 let audioContext  = null;
 let nextStartTime = 0;
 let ws = null;
 let selectedVoice = null;
+let engineReady = false;
 
 // DOM Elements
 const statusSpan = document.getElementById('status');
@@ -20,19 +27,39 @@ function setStatus(text, state) {
     statusDot.className  = 'status-dot' + (state ? ' ' + state : '');
 }
 
+async function waitForEngine() {
+    if (engineReady) return;
+    while (true) {
+        try {
+            const res = await fetch('/api/ready');
+            const data = await res.json();
+            if (data.ready) { engineReady = true; return; }
+        } catch (e) {}
+        await new Promise(r => setTimeout(r, 2000));
+    }
+}
+
 // ==============================================================================
 // 1. LOAD VOICES
 // Fetches /api/voices and populates the voice button list.
 // ==============================================================================
 async function loadVoices() {
+    voiceList.innerHTML = '<span class="voice-loading">Loading voices...</span>';
+    await waitForEngine();
+
     try {
-        const res = await fetch('/api/voices');
+        const res = await fetch('/api/voices', {
+            headers: {
+                "Authorization": localStorage.getItem("token")
+            }
+        });
         const voices = await res.json();
 
         voiceList.innerHTML = '';
 
         if (!voices || voices.length === 0) {
-            voiceList.innerHTML = '<span class="voice-loading">No voices found — add a .wav + .txt to the voices/ folder.</span>';
+            voiceList.innerHTML = '<span class="voice-loading">No voices yet.</span>';
+            addPlusButton();
             return;
         }
 
@@ -44,7 +71,6 @@ async function loadVoices() {
             btn.onclick      = () => selectVoice(v.name, btn);
             voiceList.appendChild(btn);
 
-            // Auto-select first voice on load
             if (i === 0) selectVoice(v.name, btn);
         });
 
@@ -63,7 +89,8 @@ async function loadVoices() {
 // ==============================================================================
 function openVoiceSocket(name) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws             = new WebSocket(`${protocol}//${window.location.host}/api/${name}`);
+    const token = localStorage.getItem("token");
+    ws = new WebSocket(`${protocol}//${window.location.host}/api/${name}?token=${token}`);
     ws.binaryType  = 'arraybuffer';
 
     ws.onopen = () => {
@@ -226,11 +253,12 @@ document.getElementById('modalUpload').onclick = async () => {
     const name        = document.getElementById('voiceName').value.trim();
     const transcript  = document.getElementById('voiceTranscript').value.trim();
     const file        = document.getElementById('voiceFile').files[0];
+    const verifyFile  = document.getElementById('verifyFile').files[0];
     const modalStatus = document.getElementById('modalStatus');
     const modalUpload = document.getElementById('modalUpload');
 
-    if (!name || !transcript || !file) {
-        modalStatus.textContent = 'Please fill in all fields and select a .wav file.';
+    if (!name || !transcript || !file || !verifyFile) {
+        modalStatus.textContent = 'Please fill in all fields and upload both audio files.';
         modalStatus.style.color = '#ef4444';
         return;
     }
@@ -243,22 +271,21 @@ document.getElementById('modalUpload').onclick = async () => {
     form.append('name', name);
     form.append('transcript', transcript);
     form.append('file', file);
+    form.append('verifyFile', verifyFile);
 
     try {
-        const res  = await fetch('/api/voices/upload', { method: 'POST', body: form });
+        const res  = await fetch('/api/voices/upload', {
+            method: 'POST',
+            headers: {
+                "Authorization": localStorage.getItem("token")
+            },
+            body: form
+        });
         const data = await res.json();
 
         if (data.success) {
-            // Insert new pill before the + button
-            const plusBtn    = voiceList.querySelector('.voice-btn-add');
-            const btn        = document.createElement('button');
-            btn.className    = 'voice-btn';
-            btn.textContent  = name;
-            btn.dataset.name = name;
-            btn.onclick      = () => selectVoice(name, btn);
-            voiceList.insertBefore(btn, plusBtn);
             closeModal();
-            selectVoice(name, btn);
+            await loadVoices();
         } else {
             modalStatus.textContent = `Error: ${data.error}`;
             modalStatus.style.color = '#ef4444';

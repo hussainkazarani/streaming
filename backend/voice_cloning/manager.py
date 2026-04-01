@@ -2,7 +2,9 @@ import os
 import logging
 import torch
 import torchaudio
-from streaming.config import VOICE_DEFINITIONS, SAMPLE_RATE
+import difflib
+import numpy as np
+from streaming.config import SAMPLE_RATE, CONSENT_TEXT
 
 # Initialize the module-specific logger
 logger = logging.getLogger(__name__)
@@ -30,7 +32,7 @@ def load_reference_audio(path: str, sample_rate: int = SAMPLE_RATE) -> torch.Ten
     and resamples the audio to match the engine's target sample rate.
     """
     if not os.path.exists(path):
-        logger.error(f"Reference audio not found: {path}")
+        logger.error("Reference audio not found: %s", path)
         raise FileNotFoundError(f"Reference audio not found: {path}")
     
     try:
@@ -45,44 +47,103 @@ def load_reference_audio(path: str, sample_rate: int = SAMPLE_RATE) -> torch.Ten
         logger.error(f"Failed to load or resample audio at {path}", exc_info=True)
         raise
 
-def load_voices(engine) -> dict:
+def load_voices(engine, voices_data) -> dict:
     """
-    Iterates through VOICE_DEFINITIONS, loads the reference audio, 
-    and pre-computes the tokenizer tensors to prevent latency on first request.
+    Loads voices from metadata and RETURNS a dict of name -> Segment.
+    No global state mutation here.
     """
-    logger.info("Initializing voice cloning references...")
+
+    logger.info("Loading voices...")
+
     voices = {}
-    
-    for d in VOICE_DEFINITIONS:
+
+    for v in voices_data:
         try:
-            path = get_voice_path(d["filename"])
+            name = v["name"]
+
+            if name in voices:
+                logger.debug(f"Voice already loaded, skipping: {name}")
+                continue
+
+            path = v["path"]
+            text = v["text"]
+            speaker_id = v["speaker_id"]
+
             audio = load_reference_audio(path, SAMPLE_RATE)
-            seg = Segment(text=d["text"], speaker=d["speaker_id"], audio=audio)
+
+            seg = Segment(
+                text=text,
+                speaker=speaker_id,
+                audio=audio
+            )
+
+            seg.audio_tokens = tokenize_audio(engine, audio)
             
-            with torch.no_grad():
-                audio_gpu = audio.to(engine.device)
-                audio_tokens = engine.audio_tokenizer.encode(audio_gpu.unsqueeze(0).unsqueeze(0))[0]
-                audio_tokens = audio_tokens[:engine._num_codebooks, :]
-                
-                eos = torch.zeros(audio_tokens.size(0), 1, device=engine.device)
-                audio_tokens = torch.cat([audio_tokens, eos], dim=1)
-                
-                T = audio_tokens.size(1)
-                width = engine._num_codebooks + 1
-                frame = torch.zeros(T, width, dtype=torch.long, device=engine.device)
-                mask = torch.zeros(T, width, dtype=torch.bool, device=engine.device)
-                
-                frame[:, :engine._num_codebooks] = audio_tokens.transpose(0, 1)
-                mask[:, :engine._num_codebooks] = True
-                
-                seg.audio_tokens = (frame.unsqueeze(0), mask.unsqueeze(0))
-            
-            voices[d["name"]] = seg
-            logger.debug(f"Successfully loaded and tokenized voice: {d['name']}")
-            
+            voices[name] = seg
+
+            logger.debug(f"Successfully loaded and tokenized voice: {name}")
+
         except Exception:
-            # exc_info=True grabs the full traceback, which is crucial for debugging file I/O
-            logger.error(f"Failed to load voice profile '{d['name']}'", exc_info=True)
-            
-    logger.info(f"Completed loading {len(voices)} voice profiles.")
+            logger.error(f"Failed to load voice '{v.get('name')}'", exc_info=True)
+
+    logger.info(f"Finished loading voices. Total: {len(voices)}")
+
     return voices
+
+def tokenize_audio(engine, audio: torch.Tensor) -> tuple:
+    """Tokenizes a reference audio tensor for use in a voice segment."""
+    with torch.no_grad():
+        audio_gpu = audio.to(engine.device)
+
+        tokens = engine.audio_tokenizer.encode(
+            audio_gpu.unsqueeze(0).unsqueeze(0)
+        )[0]
+
+        tokens = tokens[:engine._num_codebooks, :]
+
+        eos = torch.zeros(tokens.size(0), 1, device=engine.device)
+        tokens = torch.cat([tokens, eos], dim=1)
+
+        T = tokens.size(1)
+        width = engine._num_codebooks + 1
+
+        frame = torch.zeros(T, width, dtype=torch.long, device=engine.device)
+        mask  = torch.zeros(T, width, dtype=torch.bool, device=engine.device)
+
+        frame[:, :engine._num_codebooks] = tokens.transpose(0, 1)
+        mask[:, :engine._num_codebooks]  = True
+
+        return (frame.unsqueeze(0), mask.unsqueeze(0))
+    
+def verify_consent(whisper_model, voice_encoder, consent_path, reference_path, threshold=0.75):
+    """
+    Verifies that the consent audio matches the expected text (via Whisper)
+    and that the speaker matches the reference audio (via Resemblyzer).
+    """
+    # 1. Transcribe and check text accuracy
+    result = whisper_model.transcribe(consent_path)
+    transcript = result["text"].strip()
+    ratio = difflib.SequenceMatcher(None, transcript.lower(), CONSENT_TEXT.lower()).ratio()
+    
+    logger.debug("Consent transcription ratio: %.2f — '%s'", ratio, transcript)
+    
+    if ratio < 0.85:
+        return False, f"Please read the consent phrase more clearly (accuracy: {int(ratio*100)}%)"
+
+    # 2. Compare speaker embeddings
+    consent_wav   = load_reference_audio(consent_path).numpy()
+    reference_wav = load_reference_audio(reference_path).numpy()
+
+    consent_embed   = voice_encoder.embed_utterance(consent_wav)
+    reference_embed = voice_encoder.embed_utterance(reference_wav)
+
+    similarity = float(np.dot(consent_embed, reference_embed) / (
+        np.linalg.norm(consent_embed) * np.linalg.norm(reference_embed)
+    ))
+
+    logger.debug("Voice similarity score: %.2f", similarity)
+
+    if similarity < threshold:
+        return False, f"Voice does not match reference audio (similarity: {int(similarity*100)}%)"
+
+    return True, "Verified"

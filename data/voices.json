@@ -1,0 +1,26 @@
+[
+    {
+        "name": "alice",
+        "path": "backend/voice_cloning/voices/alice.wav",
+        "speaker_id": 0,
+        "text": "Its name and its situation were the same as those of the old place of carrying out the terrible sentence inflicted on accused persons who stood mute."
+    },
+    {
+        "name": "chandrika",
+        "path": "backend/voice_cloning/voices/chandrika.wav",
+        "speaker_id": 1,
+        "text": "Humans are naturally curious. From the earliest days of civilization, people have looked at the stars, the oceans, and the forests and wondered what lies beyond. Curiosity drives innovation, asking questions that lead to discoveries, inventions, and new ways of thinking. Every child exploring a garden or a rock is practicing the same impulse that has led to great scientific achievements. Learning begins with observation, and observation begins with wonder."
+    },
+    {
+        "name": "ryan",
+        "path": "backend/voice_cloning/voices/ryan.wav",
+        "speaker_id": 2,
+        "text": "The sun was setting slowly, casting long shadows across the empty field."
+    },
+    {
+        "name": "sesame",
+        "path": "backend/voice_cloning/voices/sesame.wav",
+        "speaker_id": 3,
+        "text": "Ardent in the prosecution of heresy, Cyril auspiciously opened his reign by oppressing the Novatians, the most innocent and harmless of the sectaries."
+    }
+]

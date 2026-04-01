@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stream TTS</title>
     <link rel="icon" href="/favicon.ico">
-    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/home/style.css">
 </head>
 <body>
     <div class="container">
@@ -34,6 +34,12 @@
             <input type="text" id="voiceName" placeholder="Voice name">
             <input type="text" id="voiceTranscript" placeholder="What the audio says">
             <input type="file" id="voiceFile" accept=".wav">
+           
+            <div class="modal-section-label">Verification</div>
+            <p class="modal-verify-text">To use a custom voice, you must record yourself reading the phrase below exactly.</p>
+            <div class="modal-phrase">I consent to my voice being cloned and used in AI-generated audio on this platform.</div>
+            <input type="file" id="verifyFile" accept=".wav">
+
             <div id="modalStatus"></div>
             <div class="modal-btns">
                 <button id="modalCancel">Cancel</button>
@@ -42,6 +48,6 @@
         </div>
     </div>
 
-    <script src="/client.js"></script>
+    <script src="/home/client.js"></script>
 </body>
 </html>

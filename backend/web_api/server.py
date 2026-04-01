@@ -20,17 +20,23 @@ import torch
 from fastapi import Form, UploadFile, File
 from voice_cloning.manager import Segment, load_reference_audio
 from streaming.worker import get_engine
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from streaming.utils import split_text
-from streaming.worker import req_queue, VOICES, flush_queues, init_worker_thread
+from streaming.worker import req_queue, flush_queues, init_worker_thread, get_whisper, get_voice_encoder
+from streaming.config import VOICE_SEGMENTS, USERS
+from web_api.auth import OTP_STORE, TOKEN_STORE, LAST_OTP_REQUESTS, get_user, send_email
+from storage import load_users, save_users, load_allvoices_file, save_allvoices_file, load_user_voices, save_user_voices
+from web_api.logger import setup_logging, log_request
+from web_api.auth import generate_token
+from voice_cloning.manager import verify_consent
 
-# Initialize module logger
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-)
+import random
+import time
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # performed 1 optimization (priority process on admin privileges)
@@ -51,87 +57,203 @@ abort_event = threading.Event()
 async def startup_event():
     """Starts the PyTorch worker thread when the FastAPI server boots up."""
     logger.info("FastAPI server starting up...")
+
+    # load users into memory
+    users = load_users()
+    USERS.update(users)
+
+    # preload token -> email mapping
+    for email, token in USERS.items():
+        TOKEN_STORE[token] = email
+    
     main_loop = asyncio.get_running_loop()
     init_worker_thread(main_loop)
 
 @app.get("/")
-async def get_index():
-    """Serves the main HTML interface."""
-    return FileResponse(os.path.join(_project_root, "frontend", "index.html"))
+async def root():
+    return RedirectResponse("/login/login.html")
 
 @app.get("/favicon.ico")
 async def favicon():
     return FileResponse(os.path.join(_project_root, "assets", "favicon.ico"))
 
-@app.get("/background.webp")
-async def get_background():
-    return FileResponse(os.path.join(_project_root, "assets", "background.webp"))
+@app.get("/api/ready")
+async def is_ready():
+    from streaming.worker import get_engine
+    engine = get_engine()
+    return {"ready": engine is not None}
 
-@app.get("/client.js")
-async def get_client_js():
-    """Serves the frontend JavaScript logic."""
-    return FileResponse(os.path.join(_project_root, "frontend","client.js"), media_type="application/javascript")
+@app.post("/auth/request-otp")
+async def request_otp(data: dict):
+    email = data["email"]
+    now = time.time()
 
-@app.get("/style.css")
-async def get_css():
-    """Serves the frontend stylesheet."""
-    return FileResponse(os.path.join(_project_root, "frontend", "style.css"), media_type="text/css")
+    # get existing timestamps
+    timestamps = LAST_OTP_REQUESTS.get(email, [])
+
+    # keep only last 60 seconds
+    timestamps = [t for t in timestamps if now - t < 60]
+
+    if len(timestamps) >= 3:
+        return {
+            "success": False,
+            "error": "Too many OTP requests. Try again later."
+        }
+
+    # add current request
+    timestamps.append(now)
+    LAST_OTP_REQUESTS[email] = timestamps
+
+    otp = str(random.randint(100000, 999999))
+
+    OTP_STORE[email] = {
+        "otp": otp,
+        "expiry": time.time() + 300  # 5 minutes
+    }
+
+    send_email(email, otp)
+
+    logger.debug("OTP generated for %s", email)
+
+    return {"success": True}
+
+@app.post("/auth/verify-otp")
+async def verify_otp(data: dict):
+    email = data["email"]
+    otp   = data["otp"]
+
+    record = OTP_STORE.get(email)
+
+    if not record:
+        return {"success": False, "error": "No OTP found"}
+
+    # expiry check
+    if time.time() > record["expiry"]:
+        return {"success": False, "error": "OTP expired"}
+
+    # actual OTP check
+    if otp != record["otp"]:
+        return {"success": False, "error": "Wrong OTP"}
+
+    del OTP_STORE[email]
+
+    if email in USERS:
+        token = USERS[email]
+    else:
+        token = generate_token()
+        USERS[email] = token
+        save_users(USERS)
+
+    TOKEN_STORE[token] = email
+
+    return {"success": True, "token": token}
 
 @app.get("/api/voices")
-async def list_voices():
+async def list_voices(request: Request):
     """Returns the pre-loaded voices for the frontend UI."""
-    return JSONResponse([{"name": name, "speaker_id": seg.speaker} for name, seg in VOICES.items()])
+    user = get_user(request)
+
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    
+    user_voice_names = load_user_voices(user)
+    logger.info("User: %s, user_voices: %s, VOICE_SEGMENTS keys: %s", user, user_voice_names, list(VOICE_SEGMENTS.keys()))
+    
+    return JSONResponse([
+        {"name": name, "speaker_id": VOICE_SEGMENTS[name].speaker}
+        for name in user_voice_names if name in VOICE_SEGMENTS
+    ])
 
 @app.post("/api/voices/upload")
 async def upload_voice(
+    request: Request,
     name: str = Form(...),
     transcript: str = Form(...),
     file: UploadFile = File(...),
+    verify_file: UploadFile = File(..., alias="verifyFile"),
 ):
+    user = get_user(request)
+
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    log_request(user, "upload", voice=name, text=transcript)
+
     if not file.filename.endswith('.wav'):
         return JSONResponse({"error": "Only .wav files accepted"}, status_code=400)
 
-    if name in VOICES:
+    if name in VOICE_SEGMENTS:
         return JSONResponse({"error": f"Voice '{name}' already exists"}, status_code=400)
 
     engine = get_engine()
     if engine is None:
         return JSONResponse({"error": "Engine not ready yet"}, status_code=503)
 
-    import tempfile
-    contents = await file.read()
-    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
-        tmp.write(contents)
-        tmp_path = tmp.name
+    # SAVE FILE PERMANENTLY
+    upload_dir = os.path.join(_project_root, "backend", "voice_cloning", "voices")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    file_path = os.path.join(upload_dir, f"{name}.wav")
+
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
+    # VERIFY CONSENT
+    consent_path = os.path.join(upload_dir, f"{name}_consent.wav")
+    with open(consent_path, "wb") as f:
+        f.write(await verify_file.read())
+
+    whisper_m = get_whisper()
+    encoder   = get_voice_encoder()
+
+    ok, reason = verify_consent(whisper_m, encoder, consent_path, file_path)
+    os.remove(consent_path)
+
+    if not ok:
+        os.remove(file_path)
+        return JSONResponse({"error": reason}, status_code=400)
 
     try:
-        audio = load_reference_audio(tmp_path)
-        seg   = Segment(text=transcript, speaker=len(VOICES), audio=audio)
+        # BUILD SEGMENT
+        audio = load_reference_audio(file_path)
+        seg = Segment(text=transcript, speaker=len(VOICE_SEGMENTS), audio=audio)
 
-        with torch.no_grad():
-            audio_gpu    = audio.to(engine.device)
-            audio_tokens = engine.audio_tokenizer.encode(audio_gpu.unsqueeze(0).unsqueeze(0))[0]
-            audio_tokens = audio_tokens[:engine._num_codebooks, :]
-            eos          = torch.zeros(audio_tokens.size(0), 1, device=engine.device)
-            audio_tokens = torch.cat([audio_tokens, eos], dim=1)
-            T            = audio_tokens.size(1)
-            width        = engine._num_codebooks + 1
-            frame        = torch.zeros(T, width, dtype=torch.long, device=engine.device)
-            mask         = torch.zeros(T, width, dtype=torch.bool, device=engine.device)
-            frame[:, :engine._num_codebooks] = audio_tokens.transpose(0, 1)
-            mask[:, :engine._num_codebooks]  = True
-            seg.audio_tokens = (frame.unsqueeze(0), mask.unsqueeze(0))
+        from voice_cloning.manager import tokenize_audio
+        seg.audio_tokens = tokenize_audio(engine, audio)
 
-        VOICES.update({name: seg})
-        logger.info(f"Voice '{name}' uploaded and added to memory.")
-        return JSONResponse({"success": True, "name": name, "speaker_id": seg.speaker})
+        # STORE IN MEMORY
+        VOICE_SEGMENTS[name] = seg
+
+        # SAVE TO GLOBAL FILE
+        data = load_allvoices_file()
+
+        data.append({
+            "name": name,
+            "path": file_path,
+            "text": transcript,
+            "speaker_id": seg.speaker
+        })
+
+        save_allvoices_file(data)
+
+        # LINK TO USER
+        voices = load_user_voices(user)
+
+        if name not in voices:
+            voices.append(name)
+            save_user_voices(user, voices)
+
+        logger.info("Voice '%s' uploaded successfully.", name)
+
+        return JSONResponse({
+            "success": True,
+            "name": name,
+            "speaker_id": seg.speaker
+        })
 
     except Exception as e:
-        logger.error(f"Failed to upload voice '{name}'", exc_info=True)
+        logger.error("Failed to upload voice '%s'", name, exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)
-
-    finally:
-        os.unlink(tmp_path)
 
 @app.websocket("/api/{voice_name}")
 async def voice_websocket(websocket: WebSocket, voice_name: str):
@@ -139,12 +261,26 @@ async def voice_websocket(websocket: WebSocket, voice_name: str):
     Handles real-time WebSocket connections.
     Receives text, pushes to the AI worker queue, and streams back audio bytes.
     """
+    token = websocket.query_params.get("token")
+    user = TOKEN_STORE.get(token)
+
+    if token not in TOKEN_STORE:
+        await websocket.close(code=1008)
+        return
+
     global current_active_user
 
     # 1. Validate requested voice
-    if voice_name not in VOICES:
-        logger.warning(f"Connection rejected: Voice '{voice_name}' not found.")
+    if voice_name not in VOICE_SEGMENTS:
+        logger.warning("Connection rejected: Voice '%s' not found.", voice_name)
         return await websocket.close(code=1008)
+    
+    # check user owns voice
+    user_voices = load_user_voices(user)
+
+    if voice_name not in user_voices:
+        await websocket.close(code=1008)
+        return
 
     # 2. Enforce single-user lock
     if current_active_user is not None:
@@ -153,17 +289,18 @@ async def voice_websocket(websocket: WebSocket, voice_name: str):
 
     await websocket.accept()
     current_active_user = websocket
-    voice_segment = VOICES[voice_name]
+    voice_segment = VOICE_SEGMENTS[voice_name]
     speaker_id    = voice_segment.speaker
 
     abort_event.clear()
     flush_queues()
-    logger.info(f"WebSocket connected. Streaming voice: {voice_name}")
+    logger.info("WebSocket connected. Streaming voice: %s", voice_name)
 
     try:
         while True:
             # Wait for incoming text from the browser
             data   = await websocket.receive_text()
+            log_request(user, "generate", voice=voice_name, text=data)
             chunks = split_text(data)
 
             if not chunks:
@@ -209,6 +346,7 @@ async def voice_websocket(websocket: WebSocket, voice_name: str):
         current_active_user = None
         logger.info("Connection closed. GPU lock released.")
 
+app.mount("/", StaticFiles(directory=os.path.join(_project_root, "frontend"), html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn

@@ -9,6 +9,7 @@ First, update the system and install the required NVIDIA drivers and CUDA toolki
 sudo apt update
 sudo apt upgrade -y
 sudo apt install -y nvidia-driver-535 nvidia-utils-535 nvidia-cuda-toolkit
+sudo apt install ffmpeg -y
 
 # Reboot the instance to apply driver changes
 sudo reboot

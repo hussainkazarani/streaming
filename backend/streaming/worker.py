@@ -9,14 +9,19 @@ logger = logging.getLogger(__name__)
 # The queue where FastAPI drops incoming text requests
 req_queue = queue.Queue()
 
-# Global dictionary holding loaded voices in memory
-VOICES = {}
-
 # Engine instances
 engine_instance = None
+whisper_model = None
+voice_encoder = None
 
 def get_engine():
     return engine_instance
+
+def get_whisper():
+    return whisper_model
+
+def get_voice_encoder():
+    return voice_encoder
 
 def init_worker_thread(main_loop: asyncio.AbstractEventLoop):
     """Spins up the isolated background thread for the PyTorch engine."""
@@ -30,18 +35,31 @@ def _model_worker(main_loop: asyncio.AbstractEventLoop):
     then waits for incoming text chunks to process.
     Imports are deferred here so PyTorch is never loaded by the main web server thread.
     """
-    global VOICES
     logger.info("Starting AI Worker Thread...")
 
     try:
-        # Deferred imports — keeps PyTorch out of the FastAPI thread
+        # Deferred imports - keeps PyTorch out of the FastAPI thread
         from tts_engine.engine import StreamTTS
         from voice_cloning.manager import load_voices
+        from web_api.storage import load_allvoices_file
+        from streaming.config import VOICE_SEGMENTS
 
-        global engine_instance
+        global engine_instance, whisper_model, voice_encoder
         engine = StreamTTS()
         engine_instance = engine
-        VOICES.update(load_voices(engine))
+
+        import whisper
+        from resemblyzer import VoiceEncoder
+
+        whisper_model = whisper.load_model("base")
+        voice_encoder = VoiceEncoder()
+
+        logger.info("Whisper and Resemblyzer loaded.")
+
+        voices_data = load_allvoices_file()
+        voices = load_voices(engine, voices_data)
+        VOICE_SEGMENTS.update(voices)
+
         logger.info("AI Worker is fully loaded and listening for requests.")
     except Exception:
         logger.error("Failed to initialize AI Engine in worker thread", exc_info=True)

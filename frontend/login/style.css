@@ -1,0 +1,175 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+    background: #f5f5f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.login-wrap {
+    width: 100%;
+    max-width: 480px;
+    padding: 0 24px;
+}
+
+h2 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #1a1a1a;
+    letter-spacing: -0.3px;
+    margin-bottom: 8px;
+}
+
+.sub {
+    font-size: 13px;
+    color: #888;
+    font-weight: 400;
+    margin-bottom: 16px;
+    line-height: 1.6;
+}
+
+.sub.small { font-size: 12px; margin-bottom: 10px; }
+
+.section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #666;
+    margin-bottom: 8px;
+}
+
+/* Email input + resend button as flex siblings */
+.email-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+#email {
+    flex: 1;
+    border: 1px solid #d0d0d0;
+    border-radius: 2px;
+    padding: 12px 14px;
+    font-family: inherit;
+    font-size: 14px;
+    color: #222;
+    background: #fff;
+    outline: none;
+    transition: border-color 0.15s, background 0.2s;
+    margin-bottom: 0;
+}
+
+#email::placeholder { color: #aaa; }
+#email:focus { border-color: #ff5f1f; }
+#email.error { border-color: #ff1744 !important; background: #fff5f5; }
+
+/* Orange resend button — hidden until OTP is sent */
+#resendBtn {
+    display: none;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 0 14px;
+    flex-shrink: 0;
+    background: #ff5f1f;
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+    color: #fff;
+    margin: 0;
+    transition: background 0.15s;
+    /* reset inherited button styles */
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+#resendBtn:hover { background: #e54d12; }
+
+#resendBtn svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+/* OTP + other inputs */
+input[type="text"],
+input:not([type]) {
+    display: block;
+    width: 100%;
+    border: 1px solid #d0d0d0;
+    border-radius: 2px;
+    padding: 12px 14px;
+    font-family: inherit;
+    font-size: 14px;
+    color: #222;
+    background: #fff;
+    outline: none;
+    transition: border-color 0.15s, background 0.2s;
+    margin-bottom: 14px;
+}
+
+input:focus { border-color: #ff5f1f; }
+input.error { border-color: #ff1744 !important; background: #fff5f5; }
+
+/* Buttons */
+button {
+    display: block;
+    background: #ff5f1f;
+    color: white;
+    border: none;
+    padding: 12px 28px;
+    border-radius: 2px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-family: inherit;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
+}
+
+button:hover:not(:disabled) { background: #e54d12; }
+button:disabled { background: #ccc; color: #888; cursor: not-allowed; }
+
+#sendBtn {
+    width: 100%;
+    padding: 12px 28px;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
+.full-btn { width: 100%; }
+
+#otpSection { display: none; margin-top: 0; }
+
+#otp {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.3em;
+    text-align: center;
+}
+
+#status {
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    min-height: 18px;
+    color: #666;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.25s ease, transform 0.25s ease, color 0.2s;
+}
+
+#status.visible { opacity: 1; transform: translateY(0); }
+#status.error { color: #ff1744; }
