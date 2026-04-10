@@ -13,6 +13,7 @@ req_queue = queue.Queue()
 engine_instance = None
 whisper_model = None
 voice_encoder = None
+voices_loaded = False
 
 def get_engine():
     return engine_instance
@@ -44,7 +45,7 @@ def _model_worker(main_loop: asyncio.AbstractEventLoop):
         from web_api.storage import load_allvoices_file
         from streaming.config import VOICE_SEGMENTS
 
-        global engine_instance, whisper_model, voice_encoder
+        global engine_instance, whisper_model, voice_encoder, voices_loaded
         engine = StreamTTS()
         engine_instance = engine
 
@@ -59,6 +60,7 @@ def _model_worker(main_loop: asyncio.AbstractEventLoop):
         voices_data = load_allvoices_file()
         voices = load_voices(engine, voices_data)
         VOICE_SEGMENTS.update(voices)
+        voices_loaded = True
 
         logger.info("AI Worker is fully loaded and listening for requests.")
     except Exception:
@@ -92,3 +94,6 @@ def flush_queues():
             req_queue.get_nowait()
         except queue.Empty:
             break
+
+def is_ready():
+    return engine_instance is not None and voices_loaded

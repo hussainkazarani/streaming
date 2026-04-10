@@ -12,9 +12,7 @@
         <h1>Stream TTS</h1>
 
         <div class="section-label">Voice</div>
-        <div id="voiceList">
-            <span class="voice-loading">Loading voices...</span>
-        </div>
+        <div id="voiceList"></div>
 
         <textarea id="textInput" rows="5" placeholder="Type something to speak..."></textarea>
 
@@ -44,6 +42,17 @@
             <div class="modal-btns">
                 <button id="modalCancel">Cancel</button>
                 <button id="modalUpload">Upload</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="deleteOverlay">
+        <div class="modal">
+            <h2>Delete Voice</h2>
+            <p class="modal-verify-text">Are you sure you want to delete <strong id="deleteVoiceName"></strong>? This cannot be undone.</p>
+            <div class="modal-btns">
+                <button id="deleteCancel">Cancel</button>
+                <button id="deleteConfirm">Delete</button>
             </div>
         </div>
     </div>

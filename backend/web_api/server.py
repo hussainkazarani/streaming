@@ -78,10 +78,9 @@ async def favicon():
     return FileResponse(os.path.join(_project_root, "assets", "favicon.ico"))
 
 @app.get("/api/ready")
-async def is_ready():
-    from streaming.worker import get_engine
-    engine = get_engine()
-    return {"ready": engine is not None}
+async def api_ready():
+    from streaming.worker import is_ready
+    return {"ready": is_ready()}
 
 @app.post("/auth/request-otp")
 async def request_otp(data: dict):
@@ -345,6 +344,60 @@ async def voice_websocket(websocket: WebSocket, voice_name: str):
         flush_queues()
         current_active_user = None
         logger.info("Connection closed. GPU lock released.")
+
+@app.delete("/api/voices/{name}")
+async def delete_voice(name: str, request: Request):
+    user = get_user(request)
+
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    # Check user owns this voice
+    user_voices = load_user_voices(user)
+    if name not in user_voices:
+        return JSONResponse({"error": "Voice not found"}, status_code=404)
+    
+    log_request(user, "delete", voice=name)
+
+    # Remove from user's list
+    user_voices.remove(name)
+    save_user_voices(user, user_voices)
+
+    # Check if any other user still has this voice
+    all_users = load_users()
+    still_in_use = False
+
+    for email in all_users:
+        if email == user:
+            continue
+        other_voices = load_user_voices(email)
+        if name in other_voices:
+            still_in_use = True
+            break
+
+    # If no one else uses it, delete globally
+    if not still_in_use:
+        # Remove from memory
+        if name in VOICE_SEGMENTS:
+            del VOICE_SEGMENTS[name]
+
+        # Get path BEFORE deleting from file
+        all_voices = load_allvoices_file()
+        original = next((v for v in all_voices if v["name"] == name), None)
+
+        # Remove from voices.json
+        filtered = [v for v in all_voices if v["name"] != name]
+        save_allvoices_file(filtered)
+
+        # Delete the actual wav file using path from original data
+        if original and os.path.exists(original["path"]):
+            os.remove(original["path"])
+
+        logger.info("Voice '%s' fully deleted.", name)
+    else:
+        logger.info("Voice '%s' unlinked from user but still in use by others.", name)
+
+    return JSONResponse({"success": True})
 
 app.mount("/", StaticFiles(directory=os.path.join(_project_root, "frontend"), html=True), name="frontend")
 

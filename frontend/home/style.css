@@ -380,3 +380,44 @@ textarea:focus {
     color: white;
     border-color: #ff5f1f;
 }
+
+#deleteConfirm {
+    background: #ff1744;
+    color: white;
+}
+
+#deleteConfirm:hover {
+    background: #d50000;
+}
+
+.voice-btn-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.voice-delete {
+    display: none;
+    position: absolute;
+    right: -6px;
+    top: -6px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ff1744;
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    padding: 0;
+    font-family: inherit;
+    margin-bottom: 0;
+}
+
+.voice-btn-wrapper:hover .voice-delete {
+    display: flex;
+}

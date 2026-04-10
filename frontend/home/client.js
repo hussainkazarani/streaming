@@ -10,6 +10,7 @@ let nextStartTime = 0;
 let ws = null;
 let selectedVoice = null;
 let engineReady = false;
+let voiceToDelete = null;
 
 // DOM Elements
 const statusSpan = document.getElementById('status');
@@ -44,7 +45,10 @@ async function waitForEngine() {
 // Fetches /api/voices and populates the voice button list.
 // ==============================================================================
 async function loadVoices() {
-    voiceList.innerHTML = '<span class="voice-loading">Loading voices...</span>';
+    if (!engineReady) {
+        voiceList.innerHTML = '<span class="voice-loading">Loading models...</span>';
+    }
+
     await waitForEngine();
 
     try {
@@ -64,14 +68,30 @@ async function loadVoices() {
         }
 
         voices.forEach((v, i) => {
+            const wrapper    = document.createElement('div');
+            wrapper.className = 'voice-btn-wrapper';
+
             const btn        = document.createElement('button');
             btn.className    = 'voice-btn';
             btn.textContent  = v.name;
             btn.dataset.name = v.name;
             btn.onclick      = () => selectVoice(v.name, btn);
-            voiceList.appendChild(btn);
 
-            if (i === 0) selectVoice(v.name, btn);
+            const del        = document.createElement('button');
+            del.className    = 'voice-delete';
+            del.textContent  = '×';
+            del.title        = 'Delete voice';
+            del.onclick      = (e) => {
+                e.stopPropagation();
+                openDeleteModal(v.name);
+            };
+
+            wrapper.appendChild(btn);
+            wrapper.appendChild(del);
+            voiceList.appendChild(wrapper);
+
+            if (i === 0 && !selectedVoice) selectVoice(v.name, btn);
+            if (v.name === selectedVoice) btn.classList.add('active');
         });
 
         addPlusButton();
@@ -240,6 +260,7 @@ function closeModal() {
     document.getElementById('voiceName').value          = '';
     document.getElementById('voiceTranscript').value    = '';
     document.getElementById('voiceFile').value          = '';
+    document.getElementById('verifyFile').value         = '';
     document.getElementById('modalStatus').textContent  = '';
 }
 
@@ -295,6 +316,57 @@ document.getElementById('modalUpload').onclick = async () => {
         modalStatus.textContent = 'Upload failed — server error.';
         modalStatus.style.color = '#ef4444';
         modalUpload.disabled    = false;
+    }
+};
+
+// ==============================================================================
+// 6. DELETE VOICE MODAL
+// ==============================================================================
+function openDeleteModal(name) {
+    voiceToDelete = name;
+    document.getElementById('deleteVoiceName').textContent = name;
+    document.getElementById('deleteOverlay').classList.add('open');
+}
+
+function closeDeleteModal() {
+    voiceToDelete = null;
+    document.getElementById('deleteOverlay').classList.remove('open');
+}
+
+document.getElementById('deleteCancel').onclick = closeDeleteModal;
+
+document.getElementById('deleteOverlay').onclick = (e) => {
+    if (e.target === document.getElementById('deleteOverlay')) closeDeleteModal();
+};
+
+document.getElementById('deleteConfirm').onclick = async () => {
+    if (!voiceToDelete) return;
+
+    try {
+        const res = await fetch(`/api/voices/${encodeURIComponent(voiceToDelete)}`, {
+            method: 'DELETE',
+            headers: {
+                "Authorization": localStorage.getItem("token")
+            }
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            // Close websocket if deleted voice was selected
+            if (selectedVoice === voiceToDelete) {
+                if (ws) ws.close();
+                ws = null;
+                selectedVoice = null;
+                sendBtn.disabled = true;
+                setStatus('Waiting for user...', '');
+            }
+            closeDeleteModal();
+            await loadVoices();
+        } else {
+            alert(`Error: ${data.error}`);
+        }
+    } catch (e) {
+        alert('Delete failed — server error.');
     }
 };
 
