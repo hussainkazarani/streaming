@@ -87,3 +87,10 @@ watch -n 5 df -h
 ```bash
 python -c "import os; print(f'Total CPU Threads: {os.cpu_count()}')"
 ```
+
+sudo apt update
+sudo apt install -y nodejs npm
+sudo npm install -g pm2
+sudo pm2 start "/home/ubuntu/streaming-tts/.venv/bin/python backend/web_api/server.py" --name tts-api
+sudo pm2 logs 0 --lines 1000
+sudo pm2 kill
