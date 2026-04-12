@@ -11,7 +11,7 @@ I wanted a system that could generate human-sounding speech instantly. So, I too
     <img src="./assets/tts-architecture.jpg" alt="Architecture Diagram" width="100%">
 </p>
 
-https://github.com/user-attachments/assets/87077238-aa97-4c75-9dca-fc1c0dbf08c8
+https://github.com/user-attachments/assets/9380df83-ae18-4e40-b99d-063f00f56d2b
 
 ## The Models Under the Hood
 The engine is powered by **Sesame CSM-1B**, a 1 billion parameter conversational speech model built on a Llama transformer backbone. Unlike traditional TTS models that just do a basic text-to-waveform conversion, CSM-1B processes text and audio inputs simultaneously using a multimodal architecture. 
